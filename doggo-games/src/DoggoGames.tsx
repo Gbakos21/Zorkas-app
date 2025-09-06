@@ -13,9 +13,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  */
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
-const BASE = import.meta.env.MODE === "production" ? "/Zorkas-app/" : "/";
+const BASE: string = import.meta.env.BASE_URL;
 
-const DEFAULT_PHOTOS = Array.from(
+const DEFAULT_PHOTOS: string[] = Array.from(
   { length: 16 },
   (_, i) => `${BASE}maci${i + 1}.jpg`
 );
