@@ -15,7 +15,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const BASE = import.meta.env.BASE_URL || "/"; // Vite mindig "/"-re végződik
 const DEFAULT_PHOTOS = Array.from(
   { length: 16 },
-  (_, i) => `${BASE}maci${i + 1}.jpg`
+  (_, i) => `/Zorkas-app/maci${i + 1}.jpg`
 );
 
 // Ha akarsz, ide bedrótozhatod az alapképeket.
