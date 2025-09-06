@@ -12,10 +12,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  * Tailwind ajánlott a kinézethez.
  */
 
-const BASE = import.meta.env.BASE_URL || "/"; // Vite mindig "/"-re végződik
+// GH Pages projektútvonal (repo neve). Dev módban marad "/".
+const BASE = import.meta.env.MODE === "production" ? "/Zorkas-app/" : "/";
+
 const DEFAULT_PHOTOS = Array.from(
   { length: 16 },
-  (_, i) => `/Zorkas-app/maci${i + 1}.jpg`
+  (_, i) => `${BASE}maci${i + 1}.jpg`
 );
 
 // Ha akarsz, ide bedrótozhatod az alapképeket.
