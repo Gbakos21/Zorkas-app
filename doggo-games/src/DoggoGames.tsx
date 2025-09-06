@@ -1,27 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * DoggoGames – két miniapp egyben (mobilra optimalizálva):
+ * DoggoGames – két miniapp egyben (mobil + szint rendszer a kirakóhoz):
  * 1) Memory párosító (nehézségi fok, időmérő, újra)
- * 2) Kirakó (3×3 / 4×4 / 5×5), ghost előnézet, ÉRINTÉS-BARÁT csere:
+ * 2) Kirakó szintekkel (3×3 / 4×4 / 5×5), ghost előnézet, ÉRINTÉS-BARÁT csere:
  *    - Húzd az ujjad a mezők fölött (nem kell hosszan nyomni),
  *    - vagy: koppintás + koppintás két mezőre a cseréhez.
  *
- * Használat:
- * - Add át a kutyás képeket props-ban, pl. <DoggoGames initialPhotos={["/photos/dog1.jpg", "/photos/dog2.jpg"]} />
- *   VAGY a felületen tölts fel képeket (több is mehet egyszerre).
- *
- * UI változtatások mobilra:
- * - Rugalmas fejléckiosztás (stack mobilon),
- * - Navigáció gombok teljes szélességben, nem lógnak ki,
- * - Vezérlők kisebb paddinggel, wrap-olnak,
- * - Kirakó: saját pointer-alapú drag (touch-on AZONNAL működik),
- *           + koppintásos csere fallback.
+ * ÚJ: Kirakó kampány/szintek
+ * - A fotók sorrendjében haladsz (1. kép → 2. kép → ...)
+ * - Ha kiraktad az aktuális képet, pop-up jelenik meg, és onnan lépsz tovább
+ * - Fent látod a haladást (szintek), és elmentjük LocalStorage-be, hol tartasz
+ * - Gombbal bármikor törölheted a haladást
  */
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
-// Minden maci*.jpg automatikus betöltése buildben is, helyes base-szel
-// A fájlhoz (DoggoGames.tsx) képest relatív utakból csinál buildelt URL-t
 const DEFAULT_PHOTOS = Array.from(
   { length: 16 },
   (_, i) => new URL(`./assets/maci${i + 1}.jpg`, import.meta.url).href
@@ -56,7 +49,7 @@ function useStopwatch(running: boolean) {
     let raf: number | null = null;
     const tick = (t: number) => {
       if (startRef.current == null) startRef.current = t;
-      setElapsed(t - startRef.current);
+      setElapsed(t - startRef.current!);
       if (running) raf = requestAnimationFrame(tick);
     };
 
@@ -75,24 +68,20 @@ function useStopwatch(running: boolean) {
 // -------------------- MEMORY GAME --------------------
 
 type Card = {
-  id: number; // pár-azonosító
-  img: string; // kép URL
-  index: number; // pozíció a pakliban
+  id: number;
+  img: string;
+  index: number;
   flipped: boolean;
   matched: boolean;
 };
 
 function createMemoryDeck(allPhotos: string[], pairs: number): Card[] {
-  // Válasszunk 'pairs' darab egyedi fotót (ha kevés a kép, körbeérünk)
   const unique: string[] = [];
-  for (let i = 0; i < pairs; i++) {
-    unique.push(allPhotos[i % allPhotos.length]);
-  }
+  for (let i = 0; i < pairs; i++) unique.push(allPhotos[i % allPhotos.length]);
   const cards: Card[] = unique.flatMap((img, pairIdx) => [
     { id: pairIdx, img, index: -1, flipped: false, matched: false },
     { id: pairIdx, img, index: -1, flipped: false, matched: false },
   ]);
-  // Fisher–Yates keverés és indexelés
   for (let i = cards.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [cards[i], cards[j]] = [cards[j], cards[i]];
@@ -104,12 +93,11 @@ function createMemoryDeck(allPhotos: string[], pairs: number): Card[] {
 function MemoryGame({ photos }: { photos: string[] }) {
   const [difficulty, setDifficulty] = useState<DifficultyKey>("medium");
   const [deck, setDeck] = useState<Card[]>([]);
-  const [flipped, setFlipped] = useState<number[]>([]); // indexek
+  const [flipped, setFlipped] = useState<number[]>([]);
   const [hasStarted, setHasStarted] = useState(false);
   const [finished, setFinished] = useState(false);
   const [moves, setMoves] = useState(0);
 
-  // --- LOCK + TIMEOUT KEZELÉS (stabilabb tappinghez) ---
   const [locked, setLockedState] = useState(false);
   const lockedRef = useRef(false);
   const setLocked = (v: boolean) => {
@@ -145,7 +133,6 @@ function MemoryGame({ photos }: { photos: string[] }) {
     const safe = src.length
       ? src
       : [
-          // fallback placeholder (SVG data URL)
           "data:image/svg+xml;utf8," +
             encodeURIComponent(
               `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"800\" height=\"600\" viewBox=\"0 0 800 600\"><rect width=\"100%\" height=\"100%\" fill=\"#f1f5f9\"/><text x=\"50%\" y=\"50%\" dominant-baseline=\"middle\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"28\" fill=\"#64748b\">Tölts fel képeket a Starthoz 🐾</text></svg>`
@@ -167,20 +154,16 @@ function MemoryGame({ photos }: { photos: string[] }) {
   useEffect(() => {
     if (!deck.length) return;
     const allMatched = deck.every((c) => c.matched);
-    if (allMatched && deck.length) {
+    if (allMatched) {
       setFinished(true);
-      // best time mentése
-      if (!bestMs || elapsed < bestMs) {
+      if (!bestMs || elapsed < bestMs)
         localStorage.setItem(bestKey, String(elapsed));
-      }
     }
   }, [deck, elapsed, bestMs, bestKey]);
 
   const onCardClick = (idx: number) => {
-    if (finished) return;
-    if (lockedRef.current) return; // zárolva az ellenőrzés alatt
+    if (finished || lockedRef.current) return;
     if (flipped.length >= 2) return;
-
     const card = deck[idx];
     if (card.matched || card.flipped) return;
 
@@ -189,20 +172,16 @@ function MemoryGame({ photos }: { photos: string[] }) {
     const newDeck = deck.slice();
     newDeck[idx] = { ...card, flipped: true };
     const newFlipped = [...flipped, idx];
-
     setDeck(newDeck);
     setFlipped(newFlipped);
 
     if (newFlipped.length === 2) {
       setMoves((m) => m + 1);
       setLocked(true);
-
       const [a, b] = newFlipped;
       const ca = newDeck[a];
       const cb = newDeck[b];
-
       if (ca.id === cb.id) {
-        // találat
         addTimer(() => {
           setDeck((d) => {
             const dd = d.slice();
@@ -214,7 +193,6 @@ function MemoryGame({ photos }: { photos: string[] }) {
           setLocked(false);
         }, 200);
       } else {
-        // nem találat -> visszafordítás
         addTimer(() => {
           setDeck((d) => {
             const dd = d.slice();
@@ -246,7 +224,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
           </select>
           <button
             onClick={() => startNew()}
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white shadow hover:opacity-90 w-full sm:w-auto"
+            className="px-4 py-2 rounded-xl bg-slate-900 text-amber-300 shadow hover:opacity-90 w-full sm:w-auto"
           >
             Újrakeverés
           </button>
@@ -289,7 +267,6 @@ function MemoryGame({ photos }: { photos: string[] }) {
                 : "kártya (zárva)"
             }
           >
-            {/* face */}
             <div
               className={`absolute inset-0 bg-slate-100 flex items-center justify-center text-3xl sm:text-4xl select-none ${
                 card.flipped || card.matched ? "opacity-0" : "opacity-100"
@@ -297,7 +274,6 @@ function MemoryGame({ photos }: { photos: string[] }) {
             >
               <span className="opacity-60">🐾</span>
             </div>
-            {/* photo */}
             <div
               className={`absolute inset-0 transition-opacity duration-300 ${
                 card.flipped || card.matched ? "opacity-100" : "opacity-0"
@@ -322,13 +298,9 @@ function MemoryGame({ photos }: { photos: string[] }) {
   );
 }
 
-// -------------------- JIGSAW PUZZLE (mobilbarát pointer + tap) --------------------
+// -------------------- JIGSAW PUZZLE (szintek + mobilbarát pointer + tap) --------------------
 
-type Tile = {
-  id: number; // helyes index (0..n-1)
-  order: number; // aktuális hely (0..n-1)
-  bgPos: string; // CSS backgroundPosition
-};
+type Tile = { id: number; order: number; bgPos: string };
 
 function makeTiles(img: string, grid: number): Tile[] {
   const total = grid * grid;
@@ -352,17 +324,77 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+// FIX: üres tábla NEM kész
 function isSolved(tiles: Tile[]) {
-  return tiles.every((t) => t.id === t.order);
+  return tiles.length > 0 && tiles.every((t) => t.id === t.order);
 }
+
+// Egyszerű hash a fotólista azonosításához (LocalStorage kulcshoz)
+function hashPhotos(photos: string[]) {
+  let h = 5381;
+  for (const ch of photos.join("|")) h = (h * 33) ^ ch.charCodeAt(0);
+  return (h >>> 0).toString(36);
+}
+
+type CampaignState = { index: number; solved: boolean[] };
 
 function JigsawPuzzle({ photos }: { photos: string[] }) {
   const [grid, setGrid] = useState(3); // 3,4,5
-  const [img, setImg] = useState<string>(photos[0] || "");
+
+  // Kampány állapot betöltése/fenntartása a fotólistához kötve
+  const photosHash = useMemo(() => hashPhotos(photos), [photos.join("|")]);
+  const progKey = `doggo_puzzle_prog_${photosHash}`;
+  const gridKey = `doggo_puzzle_last_grid`;
+
+  const loadCampaign = (): CampaignState => {
+    if (typeof window === "undefined")
+      return { index: 0, solved: photos.map(() => false) };
+    try {
+      const raw = localStorage.getItem(progKey);
+      if (!raw) return { index: 0, solved: photos.map(() => false) };
+      const parsed = JSON.parse(raw) as CampaignState;
+      const len = photos.length;
+      const solved = Array.from(
+        { length: len },
+        (_, i) => parsed.solved?.[i] ?? false
+      );
+      const index = Math.min(Math.max(parsed.index ?? 0, 0), len - 1);
+      return { index, solved };
+    } catch {
+      return { index: 0, solved: photos.map(() => false) };
+    }
+  };
+
+  const [campaign, setCampaign] = useState<CampaignState>(() => loadCampaign());
+  useEffect(() => {
+    // ha változott a fotólista (hash), reinit
+    setCampaign(loadCampaign());
+  }, [photosHash]);
+
+  useEffect(() => {
+    // grid persist
+    if (typeof window !== "undefined")
+      localStorage.setItem(gridKey, String(grid));
+  }, [grid]);
+  useEffect(() => {
+    // grid restore egyszer
+    if (typeof window !== "undefined") {
+      const g = Number(localStorage.getItem(gridKey));
+      if (g === 3 || g === 4 || g === 5) setGrid(g);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Aktuális kép mindig a kampány indexe
+  const currentImg =
+    photos[campaign.index] || photos[0] || DEFAULT_PHOTOS[0] || "";
+  const [img, setImg] = useState<string>(currentImg);
+  useEffect(() => setImg(currentImg), [currentImg]);
+
   const [tiles, setTiles] = useState<Tile[]>([]);
   const [showGhost, setShowGhost] = useState(true);
 
-  // ÚJ: érintés-barát csere: pointer követés + tap-to-swap
+  // Érintés-barát csere: pointer követés + tap-to-swap
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState<{
     active: boolean;
@@ -373,13 +405,15 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
 
   const startNew = (newImg = img, newGrid = grid) => {
-    const base = newImg || photos[0] || DEFAULT_PHOTOS[0] || "";
+    const base = newImg || currentImg;
     const t = makeTiles(base, newGrid);
     const shuffledOrders = shuffle(t.map((x) => x.order));
     if (shuffledOrders.every((o, i) => o === i)) shuffledOrders.reverse();
     const mixed = t.map((tile, i) => ({ ...tile, order: shuffledOrders[i] }));
     setTiles(mixed);
     setSelectedOrder(null);
+    // RESET a „most solved?” detektorhoz
+    prevSolvedRef.current = false;
   };
 
   useEffect(() => {
@@ -403,7 +437,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
     );
   };
 
-  // --- Pointer alapú húzás (működik azonnal touch-on) ---
+  // Pointer alapú húzás
   const computeOrderFromPoint = (clientX: number, clientY: number) => {
     const root = gridRef.current;
     if (!root) return null;
@@ -416,7 +450,6 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
     const row = Math.floor(y / ch);
     return row * grid + col;
   };
-
   const handlePointerDown = (order: number) => (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     setDragging({
@@ -426,14 +459,12 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
       didMove: false,
     });
   };
-
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!dragging.active) return;
     const ord = computeOrderFromPoint(e.clientX, e.clientY);
     setDragging((d) => ({ ...d, didMove: true, hoverOrder: ord }));
   };
-
-  const handlePointerUp = (e: React.PointerEvent) => {
+  const handlePointerUp = () => {
     if (!dragging.active) return;
     const targetOrder = dragging.hoverOrder ?? dragging.fromOrder!;
     const fromOrder = dragging.fromOrder!;
@@ -441,7 +472,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
       onSwap(fromOrder, targetOrder);
       setSelectedOrder(null);
     } else {
-      // Nem mozdult: koppintás logika (tap-to-swap)
+      // tap-to-swap
       if (selectedOrder == null) setSelectedOrder(fromOrder);
       else if (selectedOrder === fromOrder) setSelectedOrder(null);
       else {
@@ -458,9 +489,74 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
   };
 
   const solved = isSolved(tiles);
+  const prevSolvedRef = useRef(false);
+
+  // Pop-up a befejezéshez
+  const [showCongrats, setShowCongrats] = useState(false);
+  const handleNextLevel = () => {
+    setShowCongrats(false);
+    if (campaign.index < photos.length - 1) {
+      const nextIndex = campaign.index + 1;
+      const updated: CampaignState = {
+        index: nextIndex,
+        solved: [...campaign.solved],
+      };
+      setCampaign(updated);
+      if (typeof window !== "undefined")
+        localStorage.setItem(progKey, JSON.stringify(updated));
+      setImg(photos[nextIndex]);
+    }
+  };
+  const handleCloseCongrats = () => setShowCongrats(false);
+
+  // Szint befejezése → mentés + pop-up
+  useEffect(() => {
+    if (solved && !prevSolvedRef.current) {
+      const newSolved = [...campaign.solved];
+      if (!newSolved[campaign.index]) newSolved[campaign.index] = true;
+      const updated: CampaignState = {
+        index: campaign.index,
+        solved: newSolved,
+      };
+      setCampaign(updated);
+      if (typeof window !== "undefined")
+        localStorage.setItem(progKey, JSON.stringify(updated));
+      setShowCongrats(true);
+    }
+    prevSolvedRef.current = solved;
+  }, [solved]);
+
+  // Manuális kép választás → kampány index update
+  const handleSelectImg = (value: string) => {
+    const idx = Math.max(
+      0,
+      photos.findIndex((p) => p === value)
+    );
+    const updated: CampaignState = { index: idx, solved: [...campaign.solved] };
+    setCampaign(updated);
+    if (typeof window !== "undefined")
+      localStorage.setItem(progKey, JSON.stringify(updated));
+    setImg(value);
+  };
+
+  // Reset kampány (1. szint NEM kész)
+  const resetCampaign = () => {
+    const fresh: CampaignState = { index: 0, solved: photos.map(() => false) };
+    setCampaign(fresh);
+    if (typeof window !== "undefined")
+      localStorage.setItem(progKey, JSON.stringify(fresh));
+    prevSolvedRef.current = false; // fontos!
+    setImg(photos[0] || DEFAULT_PHOTOS[0] || "");
+  };
+
+  const solvedCount = campaign.solved.filter(Boolean).length;
+  const progressPct = photos.length
+    ? Math.round((solvedCount / photos.length) * 100)
+    : 0;
 
   return (
     <div className="w-full max-w-5xl mx-auto">
+      {/* Fejléc + kampány státusz */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <select
@@ -474,7 +570,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
           </select>
           <button
             onClick={() => startNew()}
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white shadow hover:opacity-90 w-full sm:w-auto"
+            className="px-4 py-2 rounded-xl bg-slate-900 text-amber-300 shadow hover:opacity-90 w-full sm:w-auto"
           >
             Újrakeverés
           </button>
@@ -487,25 +583,97 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
             Ghost előnézet
           </label>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <select
-            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200 w-full sm:max-w-xs"
-            value={img}
-            onChange={(e) => setImg(e.target.value)}
-          >
-            {photos.length === 0 && (
-              <option value="">(Tölts fel legalább 1 képet)</option>
-            )}
-            {photos.map((p, i) => (
-              <option key={i} value={p}>{`Kép ${i + 1}`}</option>
-            ))}
-          </select>
+
+        {/* Kampány UI */}
+        <div className="flex flex-col gap-2 w-full sm:w-[420px]">
+          <div className="flex items-center justify-between text-sm">
+            <div className="font-medium">
+              Szint: {campaign.index + 1} / {Math.max(photos.length, 1)}
+            </div>
+            <div className="text-slate-600">
+              Kész: {solvedCount} / {Math.max(photos.length, 1)}
+            </div>
+          </div>
+          <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-500"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {photos.map((_, i) => {
+              const isCurrent = campaign.index === i;
+              const isSolved = campaign.solved[i];
+
+              const base =
+                "relative w-8 h-8 rounded-full border-2 box-border leading-none text-[11px] grid place-items-center transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-white focus-visible:ring-slate-400 active:scale-95";
+
+              // Ha már kész EZ a szint (akkor is, ha épp current), zöld outline + zöld szám
+              const solvedCls =
+                "bg-white text-emerald-700 border-emerald-500 hover:bg-emerald-50";
+
+              const currentCls =
+                "bg-slate-900 text-amber-300 border-slate-900 hover:bg-slate-900";
+
+              const defaultCls =
+                "bg-white border-slate-300 text-slate-700 hover:bg-slate-100";
+
+              const cls = isSolved
+                ? solvedCls // kész mindig zöld (akkor is, ha current)
+                : isCurrent
+                ? currentCls
+                : defaultCls;
+
+              return (
+                <button
+                  key={i}
+                  onClick={() => handleSelectImg(photos[i])}
+                  className={`${base} ${cls}`}
+                  title={`Ugrás a(z) ${i + 1}. szintre`}
+                  aria-current={isCurrent ? "step" : undefined}
+                >
+                  {i + 1}
+                  {isSolved && (
+                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 text-white text-[10px] leading-none grid place-items-center">
+                      ✓
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={resetCampaign}
+              className="text-xs px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-50"
+            >
+              Kampány visszaállítása
+            </button>
+            <div className="text-xs text-slate-500">
+              Haladás automatikusan mentve
+            </div>
+          </div>
         </div>
+      </div>
+
+      {/* Kép választó */}
+      <div className="flex items-center gap-2 w-full mb-3">
+        <select
+          className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200 w-full sm:max-w-xs"
+          value={img}
+          onChange={(e) => handleSelectImg(e.target.value)}
+        >
+          {photos.length === 0 && (
+            <option value="">(Tölts fel legalább 1 képet)</option>
+          )}
+          {photos.map((p, i) => (
+            <option key={i} value={p}>{`Kép ${i + 1}`}</option>
+          ))}
+        </select>
       </div>
 
       {/* Játékmező */}
       <div className="relative" onPointerMove={handlePointerMove}>
-        {/* ghost háttér */}
         {showGhost && img && (
           <div className="absolute inset-0 rounded-2xl overflow-hidden opacity-25 pointer-events-none">
             <div
@@ -532,9 +700,8 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
                 } ${isHover ? "ring-2 ring-sky-400" : ""} ${
                   isSelected ? "ring-2 ring-amber-400" : ""
                 }`}
-                // Kattintás (fallback): két koppintásos csere
                 onClick={() => {
-                  if (dragging.active) return; // drag közben ne katt
+                  if (dragging.active) return;
                   if (selectedOrder == null) setSelectedOrder(order);
                   else if (selectedOrder === order) setSelectedOrder(null);
                   else {
@@ -566,9 +733,60 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
           })}
         </div>
 
-        {solved && (
-          <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-sm">
-            Kirakva! 🎉
+        {/* Pop-up: szint kész / kampány kész */}
+        {showCongrats && (
+          <div
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={handleCloseCongrats}
+            />
+            <div className="relative z-10 w-full max-w-sm bg-white rounded-2xl shadow-xl border border-slate-200 p-5 text-center">
+              {campaign.index < photos.length - 1 ? (
+                <>
+                  <div className="text-2xl mb-2">🎉 Szint kész!</div>
+                  <p className="text-slate-600 mb-4">Jöhet a következő kép?</p>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      onClick={handleCloseCongrats}
+                      className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50"
+                    >
+                      Maradok
+                    </button>
+                    <button
+                      onClick={handleNextLevel}
+                      className="px-4 py-2 rounded-xl bg-slate-900 text-amber-300 hover:opacity-90"
+                    >
+                      Tovább
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl mb-2">🏁 Kampány kész!</div>
+                  <p className="text-slate-600 mb-4">
+                    Gratulálok, az összes képet kiraktad.
+                  </p>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      onClick={handleCloseCongrats}
+                      className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50"
+                    >
+                      Bezár
+                    </button>
+                    <button
+                      onClick={resetCampaign}
+                      className="px-4 py-2 rounded-xl bg-slate-900 text-amber-300 hover:opacity-90"
+                    >
+                      Újrakezdem
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -593,7 +811,6 @@ function useObjectUrls(files: File[]) {
 function PhotoLoader({ onAdd }: { onAdd: (urls: string[]) => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const urls = useObjectUrls(files);
-
   useEffect(() => {
     if (urls.length) onAdd(urls); /* eslint-disable-next-line */
   }, [urls.join("|")]);
@@ -620,7 +837,6 @@ export default function DoggoGames({
   const [photos, setPhotos] = useState<string[]>(initialPhotos);
   const addPhotos = (urls: string[]) =>
     setPhotos((prev) => Array.from(new Set([...prev, ...urls])));
-
   const [tab, setTab] = useState<"memory" | "puzzle">("memory");
 
   return (
@@ -657,7 +873,6 @@ export default function DoggoGames({
           </div>
         </header>
 
-        {/* Info doboz, ha nincsenek képek */}
         {photos.length === 0 && (
           <div className="mb-6 p-4 bg-white border border-slate-200 rounded-xl shadow text-sm">
             Nincs még kép hozzáadva. Katt a{" "}
@@ -674,7 +889,8 @@ export default function DoggoGames({
 
         <footer className="mt-8 text-xs text-slate-500">
           Tipp: a legjobb élményhez mobilon is próbáld ki; a Memory játék menti
-          a legjobb időt nehézség szerint.
+          a legjobb időt nehézség szerint. A Kirakó szintekben halad, a
+          haladásod automatikusan mentődik.
         </footer>
       </div>
     </div>
