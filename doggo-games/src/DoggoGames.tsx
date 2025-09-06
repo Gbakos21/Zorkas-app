@@ -12,8 +12,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  * Tailwind ajánlott a kinézethez.
  */
 
-const DEFAULT_PHOTOS = Array.from({ length: 16 }, (_, i) =>
-  new URL(`maci${i + 1}.jpg`, import.meta.env.BASE_URL).toString()
+const BASE = import.meta.env.BASE_URL || "/"; // Vite mindig "/"-re végződik
+const DEFAULT_PHOTOS = Array.from(
+  { length: 16 },
+  (_, i) => `${BASE}maci${i + 1}.jpg`
 );
 
 // Ha akarsz, ide bedrótozhatod az alapképeket.
