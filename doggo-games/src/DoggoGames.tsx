@@ -12,6 +12,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  * - Ha kiraktad az aktuális képet, pop-up jelenik meg, és onnan lépsz tovább
  * - Fent látod a haladást (szintek), és elmentjük LocalStorage-be, hol tartasz
  * - Gombbal bármikor törölheted a haladást
+ *
+ * ÚJ: Felhasználói képek tartósítása
+ * - A feltöltött képeket Data URL-ként elmentjük localStorage-be
+ * - Betöltéskor automatikusan hozzáadjuk az alap képekhez
+ * - (Alap tömörítés: max 1400px oldal, hogy beleférjen a localStorage-be)
  */
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
@@ -19,6 +24,8 @@ const DEFAULT_PHOTOS = Array.from(
   { length: 16 },
   (_, i) => new URL(`./assets/maci${i + 1}.jpg`, import.meta.url).href
 );
+
+const LS_USER_PHOTOS_KEY = "doggo_user_photos_v1";
 
 // -------------------- UTIL --------------------
 
@@ -63,6 +70,54 @@ function useStopwatch(running: boolean) {
   }, [running]);
 
   return { elapsed, reset: () => setElapsed(0) };
+}
+
+// DataURL <-> localStorage helpers
+function loadUserPhotos(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(LS_USER_PHOTOS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? (arr as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+function saveUserPhotos(urls: string[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(LS_USER_PHOTOS_KEY, JSON.stringify(urls));
+}
+
+// Kép → DataURL (max méret skálázás, JPEG 0.9)
+async function fileToDataUrl(file: File, maxSide = 1400): Promise<string> {
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result as string);
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+
+  // Kép betöltés canvasra és skálázás (ha nagy)
+  const imgEl = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = dataUrl;
+  });
+
+  const { width, height } = imgEl;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  if (scale >= 1) {
+    return dataUrl; // elég kicsi, nem skálázunk
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.9);
 }
 
 // -------------------- MEMORY GAME --------------------
@@ -272,7 +327,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
                 card.flipped || card.matched ? "opacity-0" : "opacity-100"
               }`}
             >
-              <span className="opacity-60">🐾</span>
+              <span className="opacity-60">🐶</span>
             </div>
             <div
               className={`absolute inset-0 transition-opacity duration-300 ${
@@ -674,11 +729,17 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
 
       {/* Játékmező */}
       <div className="relative" onPointerMove={handlePointerMove}>
+        {/* GHOST: teljes kép férjen ki a rácsba (contain + center), ki/be */}
         {showGhost && img && (
           <div className="absolute inset-0 rounded-2xl overflow-hidden opacity-25 pointer-events-none">
             <div
-              className="w-full h-full bg-center bg-cover"
-              style={{ backgroundImage: `url(${img})` }}
+              className="w-full h-full"
+              style={{
+                backgroundImage: `url(${img})`,
+                backgroundSize: "contain",
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "center",
+              }}
             />
           </div>
         )}
@@ -796,24 +857,23 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
 
 // -------------------- FOTÓK KEZELÉSE + SHELL --------------------
 
-function useObjectUrls(files: File[]) {
-  const [urls, setUrls] = useState<string[]>([]);
-  useEffect(() => {
-    const u = files.map((f) => URL.createObjectURL(f));
-    setUrls(u);
-    return () => {
-      u.forEach(URL.revokeObjectURL);
-    };
-  }, [files]);
-  return urls;
-}
-
 function PhotoLoader({ onAdd }: { onAdd: (urls: string[]) => void }) {
-  const [files, setFiles] = useState<File[]>([]);
-  const urls = useObjectUrls(files);
-  useEffect(() => {
-    if (urls.length) onAdd(urls); /* eslint-disable-next-line */
-  }, [urls.join("|")]);
+  const onChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const dataUrls: string[] = [];
+    for (const f of files) {
+      try {
+        const du = await fileToDataUrl(f, 1400);
+        dataUrls.push(du);
+      } catch {
+        // ha bármi hiba történik olvasás közben, azt átugorjuk
+      }
+    }
+    if (dataUrls.length) onAdd(dataUrls);
+    // ugyanazt a fájlt ismét lehessen kiválasztani:
+    e.target.value = "";
+  };
 
   return (
     <label className="inline-flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2 rounded-xl bg-white shadow border border-slate-200 cursor-pointer hover:bg-slate-50 text-sm">
@@ -822,7 +882,7 @@ function PhotoLoader({ onAdd }: { onAdd: (urls: string[]) => void }) {
         accept="image/*"
         multiple
         className="hidden"
-        onChange={(e) => setFiles(Array.from(e.target.files || []))}
+        onChange={onChange}
       />
       <span>📸 Képek hozzáadása</span>
     </label>
@@ -834,9 +894,24 @@ export default function DoggoGames({
 }: {
   initialPhotos?: string[];
 }) {
-  const [photos, setPhotos] = useState<string[]>(initialPhotos);
-  const addPhotos = (urls: string[]) =>
+  // Betöltjük a felhasználó által korábban feltöltött képeket is
+  const [photos, setPhotos] = useState<string[]>(() => initialPhotos);
+  useEffect(() => {
+    const stored = loadUserPhotos();
+    if (stored.length) {
+      setPhotos((prev) => Array.from(new Set([...prev, ...stored])));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Hozzáadás + mentés localStorage-be
+  const addPhotos = (urls: string[]) => {
+    const currentStored = loadUserPhotos();
+    const mergedStored = Array.from(new Set([...currentStored, ...urls]));
+    saveUserPhotos(mergedStored);
     setPhotos((prev) => Array.from(new Set([...prev, ...urls])));
+  };
+
   const [tab, setTab] = useState<"memory" | "puzzle">("memory");
 
   return (
@@ -890,7 +965,7 @@ export default function DoggoGames({
         <footer className="mt-8 text-xs text-slate-500">
           Tipp: a legjobb élményhez mobilon is próbáld ki; a Memory játék menti
           a legjobb időt nehézség szerint. A Kirakó szintekben halad, a
-          haladásod automatikusan mentődik.
+          haladásod és a feltöltött képeid automatikusan mentődnek.
         </footer>
       </div>
     </div>
