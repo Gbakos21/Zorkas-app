@@ -14,20 +14,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
 // Minden maci*.jpg automatikus betöltése buildben is, helyes base-szel
-const files = import.meta.glob("/src/assets/maci*.jpg", {
-  as: "url",
-  eager: true,
-});
-
-function numFromPath(p: string) {
-  const m = p.match(/maci(\d+)\.jpg$/i);
-  return m ? parseInt(m[1], 10) : 0;
-}
-
-const DEFAULT_PHOTOS: string[] = Object.entries(files)
-  .sort(([a], [b]) => numFromPath(a) - numFromPath(b))
-  .map(([, url]) => url as string);
-
+// A fájlhoz (DoggoGames.tsx) képest relatív utakból csinál buildelt URL-t
+const DEFAULT_PHOTOS = Array.from(
+  { length: 16 },
+  (_, i) => new URL(`./assets/maci${i + 1}.jpg`, import.meta.url).href
+);
+console.log("DEFAULT_PHOTOS", DEFAULT_PHOTOS);
 // Ha akarsz, ide bedrótozhatod az alapképeket.
 
 type DifficultyKey = "easy" | "medium" | "hard";
