@@ -2,16 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * DoggoGames – két miniapp egyben (mobil + szint rendszer a kirakóhoz):
- * 1) Memory párosító (nehézségi fok, időmérő, újra)
- * 2) Kirakó szintekkel (3×3 / 4×4 / 5×5), ghost előnézet, ÉRINTÉS-BARÁT csere:
- *    - Húzd az ujjad a mezők fölött (nem kell hosszan nyomni),
- *    - vagy: koppintás + koppintás két mezőre a cseréhez.
- *
- * ÚJ: Kirakó kampány/szintek
- * - A fotók sorrendjében haladsz (1. kép → 2. kép → ...)
- * - Ha kiraktad az aktuális képet, pop-up jelenik meg, és onnan lépsz tovább
- * - Fent látod a haladást (szintek), és elmentjük LocalStorage-be, hol tartasz
- * - Gombbal bármikor törölheted a haladást
+ * 1) Memory párosító (nehézségi fok, időmérő, újra) + SFX
+ * 2) Kirakó szintekkel (3×3 / 4×4 / 5×5), ghost előnézet, ÉRINTÉS-BARÁT csere,
+ *    SFX és 🎉🐶 konfetti a szint befejezésénél.
  *
  * ÚJ: Felhasználói képek tartósítása
  * - A feltöltött képeket Data URL-ként elmentjük localStorage-be
@@ -26,6 +19,8 @@ const DEFAULT_PHOTOS = Array.from(
 );
 
 const LS_USER_PHOTOS_KEY = "doggo_user_photos_v1";
+const LS_SFX_KEY = "doggo_sfx_enabled_v1";
+const LS_GHOST_KEY = "doggo_puzzle_ghost_v1"; // <-- Ghost beállítás mentése
 
 // -------------------- UTIL --------------------
 
@@ -72,6 +67,62 @@ function useStopwatch(running: boolean) {
   return { elapsed, reset: () => setElapsed(0) };
 }
 
+// ----- SFX (WebAudio) -----
+type Sfx = { flip: () => void; match: () => void; win: () => void };
+
+function useSfx(enabled: boolean): Sfx {
+  const ctxRef = useRef<AudioContext | null>(null);
+
+  const ensure = () => {
+    if (!enabled) return null;
+    // @ts-ignore
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!ctxRef.current) ctxRef.current = new AC();
+    if (ctxRef.current.state === "suspended") {
+      ctxRef.current.resume().catch(() => {});
+    }
+    return ctxRef.current;
+  };
+
+  const ping = (
+    freq: number,
+    duration = 0.07,
+    type: OscillatorType = "sine",
+    vol = 0.03,
+    whenOffset = 0
+  ) => {
+    if (!enabled) return;
+    const ctx = ensure();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + whenOffset;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.value = vol;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration);
+  };
+
+  const flip = () => {
+    ping(420, 0.05, "triangle", 0.03);
+  };
+  const match = () => {
+    ping(620, 0.06, "square", 0.035, 0);
+    ping(740, 0.08, "square", 0.03, 0.08);
+  };
+  const win = () => {
+    ping(660, 0.09, "sine", 0.04, 0);
+    ping(880, 0.1, "sine", 0.04, 0.12);
+    ping(990, 0.12, "sine", 0.04, 0.26);
+  };
+
+  return { flip, match, win };
+}
+
 // DataURL <-> localStorage helpers
 function loadUserPhotos(): string[] {
   if (typeof window === "undefined") return [];
@@ -98,7 +149,6 @@ async function fileToDataUrl(file: File, maxSide = 1400): Promise<string> {
     fr.readAsDataURL(file);
   });
 
-  // Kép betöltés canvasra és skálázás (ha nagy)
   const imgEl = await new Promise<HTMLImageElement>((resolve, reject) => {
     const i = new Image();
     i.onload = () => resolve(i);
@@ -108,9 +158,7 @@ async function fileToDataUrl(file: File, maxSide = 1400): Promise<string> {
 
   const { width, height } = imgEl;
   const scale = Math.min(1, maxSide / Math.max(width, height));
-  if (scale >= 1) {
-    return dataUrl; // elég kicsi, nem skálázunk
-  }
+  if (scale >= 1) return dataUrl;
 
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(width * scale);
@@ -145,7 +193,7 @@ function createMemoryDeck(allPhotos: string[], pairs: number): Card[] {
   return cards;
 }
 
-function MemoryGame({ photos }: { photos: string[] }) {
+function MemoryGame({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
   const [difficulty, setDifficulty] = useState<DifficultyKey>("medium");
   const [deck, setDeck] = useState<Card[]>([]);
   const [flipped, setFlipped] = useState<number[]>([]);
@@ -190,7 +238,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
       : [
           "data:image/svg+xml;utf8," +
             encodeURIComponent(
-              `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"800\" height=\"600\" viewBox=\"0 0 800 600\"><rect width=\"100%\" height=\"100%\" fill=\"#f1f5f9\"/><text x=\"50%\" y=\"50%\" dominant-baseline=\"middle\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"28\" fill=\"#64748b\">Tölts fel képeket a Starthoz 🐾</text></svg>`
+              `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><rect width="100%" height="100%" fill="#f1f5f9"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#64748b">Tölts fel képeket a Starthoz 🐾</text></svg>`
             ),
         ];
     const newDeck = createMemoryDeck(safe, pairs);
@@ -211,6 +259,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
     const allMatched = deck.every((c) => c.matched);
     if (allMatched) {
       setFinished(true);
+      sfx.win(); // SFX: győzelem
       if (!bestMs || elapsed < bestMs)
         localStorage.setItem(bestKey, String(elapsed));
     }
@@ -222,6 +271,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
     const card = deck[idx];
     if (card.matched || card.flipped) return;
 
+    sfx.flip(); // SFX: flip
     if (!hasStarted) setHasStarted(true);
 
     const newDeck = deck.slice();
@@ -238,6 +288,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
       const cb = newDeck[b];
       if (ca.id === cb.id) {
         addTimer(() => {
+          sfx.match(); // SFX: pár
           setDeck((d) => {
             const dd = d.slice();
             dd[a] = { ...dd[a], matched: true };
@@ -379,7 +430,7 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-// FIX: üres tábla NEM kész
+// üres tábla NEM kész
 function isSolved(tiles: Tile[]) {
   return tiles.length > 0 && tiles.every((t) => t.id === t.order);
 }
@@ -393,7 +444,7 @@ function hashPhotos(photos: string[]) {
 
 type CampaignState = { index: number; solved: boolean[] };
 
-function JigsawPuzzle({ photos }: { photos: string[] }) {
+function JigsawPuzzle({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
   const [grid, setGrid] = useState(3); // 3,4,5
 
   // Kampány állapot betöltése/fenntartása a fotólistához kötve
@@ -422,17 +473,23 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
 
   const [campaign, setCampaign] = useState<CampaignState>(() => loadCampaign());
   useEffect(() => {
-    // ha változott a fotólista (hash), reinit
     setCampaign(loadCampaign());
   }, [photosHash]);
 
+  // Kampány állapot automatikus mentése minden változásnál
   useEffect(() => {
-    // grid persist
+    try {
+      localStorage.setItem(progKey, JSON.stringify(campaign));
+    } catch {
+      // betelt localStorage esetén csendben elnyeljük
+    }
+  }, [progKey, campaign]);
+
+  useEffect(() => {
     if (typeof window !== "undefined")
       localStorage.setItem(gridKey, String(grid));
   }, [grid]);
   useEffect(() => {
-    // grid restore egyszer
     if (typeof window !== "undefined") {
       const g = Number(localStorage.getItem(gridKey));
       if (g === 3 || g === 4 || g === 5) setGrid(g);
@@ -447,7 +504,18 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
   useEffect(() => setImg(currentImg), [currentImg]);
 
   const [tiles, setTiles] = useState<Tile[]>([]);
-  const [showGhost, setShowGhost] = useState(true);
+  // GHOST alapból OFF + mentett érték visszatöltése
+  const [showGhost, setShowGhost] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    const raw = localStorage.getItem(LS_GHOST_KEY);
+    return raw === "true"; // ha nincs, false
+  });
+  // GHOST mentése
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_GHOST_KEY, String(showGhost));
+    }
+  }, [showGhost]);
 
   // Érintés-barát csere: pointer követés + tap-to-swap
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -467,7 +535,6 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
     const mixed = t.map((tile, i) => ({ ...tile, order: shuffledOrders[i] }));
     setTiles(mixed);
     setSelectedOrder(null);
-    // RESET a „most solved?” detektorhoz
     prevSolvedRef.current = false;
   };
 
@@ -525,6 +592,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
     const fromOrder = dragging.fromOrder!;
     if (dragging.didMove && targetOrder != null && fromOrder != null) {
       onSwap(fromOrder, targetOrder);
+      sfx.flip(); // SFX: csere/húzás
       setSelectedOrder(null);
     } else {
       // tap-to-swap
@@ -532,6 +600,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
       else if (selectedOrder === fromOrder) setSelectedOrder(null);
       else {
         onSwap(selectedOrder, fromOrder);
+        sfx.flip(); // SFX: csere
         setSelectedOrder(null);
       }
     }
@@ -564,7 +633,10 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
   };
   const handleCloseCongrats = () => setShowCongrats(false);
 
-  // Szint befejezése → mentés + pop-up
+  // Konfetti flag (a rács fölé)
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  // Szint befejezése → mentés + pop-up + SFX + konfetti
   useEffect(() => {
     if (solved && !prevSolvedRef.current) {
       const newSolved = [...campaign.solved];
@@ -576,7 +648,12 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
       setCampaign(updated);
       if (typeof window !== "undefined")
         localStorage.setItem(progKey, JSON.stringify(updated));
+
+      sfx.win(); // SFX: győzelem
       setShowCongrats(true);
+      setShowConfetti(true);
+      const t = window.setTimeout(() => setShowConfetti(false), 1400);
+      return () => clearTimeout(t);
     }
     prevSolvedRef.current = solved;
   }, [solved]);
@@ -600,7 +677,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
     setCampaign(fresh);
     if (typeof window !== "undefined")
       localStorage.setItem(progKey, JSON.stringify(fresh));
-    prevSolvedRef.current = false; // fontos!
+    prevSolvedRef.current = false;
     setImg(photos[0] || DEFAULT_PHOTOS[0] || "");
   };
 
@@ -663,18 +740,15 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
               const base =
                 "relative w-8 h-8 rounded-full border-2 box-border leading-none text-[11px] grid place-items-center transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-white focus-visible:ring-slate-400 active:scale-95";
 
-              // Ha már kész EZ a szint (akkor is, ha épp current), zöld outline + zöld szám
               const solvedCls =
                 "bg-white text-emerald-700 border-emerald-500 hover:bg-emerald-50";
-
               const currentCls =
                 "bg-slate-900 text-amber-300 border-slate-900 hover:bg-slate-900";
-
               const defaultCls =
                 "bg-white border-slate-300 text-slate-700 hover:bg-slate-100";
 
               const cls = isSolved
-                ? solvedCls // kész mindig zöld (akkor is, ha current)
+                ? solvedCls
                 : isCurrent
                 ? currentCls
                 : defaultCls;
@@ -727,13 +801,13 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
         </select>
       </div>
 
-      {/* Játékmező */}
+      {/* Játékmező + KONFETTI */}
       <div className="relative" onPointerMove={handlePointerMove}>
-        {/* GHOST: teljes kép férjen ki a rácsba (contain + center), ki/be */}
+        {/* GHOST ELŐTÉRBEN: z-20 + pointer-events-none, teljes kép (contain) */}
         {showGhost && img && (
-          <div className="absolute inset-0 rounded-2xl overflow-hidden opacity-25 pointer-events-none">
+          <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden pointer-events-none">
             <div
-              className="w-full h-full"
+              className="w-full h-full opacity-25"
               style={{
                 backgroundImage: `url(${img})`,
                 backgroundSize: "contain",
@@ -767,6 +841,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
                   else if (selectedOrder === order) setSelectedOrder(null);
                   else {
                     onSwap(selectedOrder, order);
+                    sfx.flip();
                     setSelectedOrder(null);
                   }
                 }}
@@ -793,6 +868,9 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
             );
           })}
         </div>
+
+        {/* KONFETTI (emoji burst) */}
+        {showConfetti && <EmojiConfetti />}
 
         {/* Pop-up: szint kész / kampány kész */}
         {showCongrats && (
@@ -855,6 +933,66 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
   );
 }
 
+// --- Emoji Confetti komponens ---
+function EmojiConfetti({
+  count = 28,
+  emojis = ["🎉", "🐶", "✨", "🎊"],
+  durationMs = 1200,
+}: {
+  count?: number;
+  emojis?: string[];
+  durationMs?: number;
+}) {
+  const items = useMemo(
+    () =>
+      Array.from({ length: count }).map(() => {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 80 + Math.random() * 140; // px
+        const dx = Math.cos(angle) * dist;
+        const dy = Math.sin(angle) * dist * 0.8 - 40; // kicsit felfelé is
+        const delay = Math.random() * 0.15; // s
+        const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+        const size = 18 + Math.round(Math.random() * 10); // px
+        return { dx, dy, delay, emoji, size };
+      }),
+    [count, emojis]
+  );
+
+  return (
+    <>
+      <style>{`
+        @keyframes emoji-burst {
+          0% { transform: translate(0,0) scale(.8) rotate(0deg); opacity: 0; }
+          10% { opacity: 1; }
+          100% { transform: translate(var(--dx), var(--dy)) rotate(360deg) scale(1.1); opacity: 0; }
+        }
+      `}</style>
+      <div className="absolute inset-0 z-30 pointer-events-none">
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          {items.map((it, i) => {
+            const style = {
+              ["--dx" as any]: `${it.dx}px`,
+              ["--dy" as any]: `${it.dy}px`,
+              animation: `emoji-burst ${durationMs}ms ease-out ${it.delay}s forwards`,
+              fontSize: `${it.size}px`,
+            } as React.CSSProperties as any;
+            return (
+              <span
+                key={i}
+                style={style}
+                className="absolute select-none"
+                aria-hidden="true"
+              >
+                {it.emoji}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // -------------------- FOTÓK KEZELÉSE + SHELL --------------------
 
 function PhotoLoader({ onAdd }: { onAdd: (urls: string[]) => void }) {
@@ -867,11 +1005,10 @@ function PhotoLoader({ onAdd }: { onAdd: (urls: string[]) => void }) {
         const du = await fileToDataUrl(f, 1400);
         dataUrls.push(du);
       } catch {
-        // ha bármi hiba történik olvasás közben, azt átugorjuk
+        // hiba esetén átugorjuk
       }
     }
     if (dataUrls.length) onAdd(dataUrls);
-    // ugyanazt a fájlt ismét lehessen kiválasztani:
     e.target.value = "";
   };
 
@@ -912,6 +1049,18 @@ export default function DoggoGames({
     setPhotos((prev) => Array.from(new Set([...prev, ...urls])));
   };
 
+  // SFX toggle (globális)
+  const [sfxEnabled, setSfxEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const raw = localStorage.getItem(LS_SFX_KEY);
+    return raw == null ? true : raw === "true";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined")
+      localStorage.setItem(LS_SFX_KEY, String(sfxEnabled));
+  }, [sfxEnabled]);
+  const sfx = useSfx(sfxEnabled);
+
   const [tab, setTab] = useState<"memory" | "puzzle">("memory");
 
   return (
@@ -923,6 +1072,16 @@ export default function DoggoGames({
           </h1>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
             <PhotoLoader onAdd={addPhotos} />
+            {/* SFX kapcsoló */}
+            <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white shadow border border-slate-200 text-sm">
+              <input
+                type="checkbox"
+                checked={sfxEnabled}
+                onChange={(e) => setSfxEnabled(e.target.checked)}
+              />
+              🔊 Hangok
+            </label>
+
             <nav className="flex items-center bg-white rounded-xl shadow border border-slate-200 overflow-hidden w-full sm:w-auto">
               <button
                 onClick={() => setTab("memory")}
@@ -957,15 +1116,16 @@ export default function DoggoGames({
         )}
 
         {tab === "memory" ? (
-          <MemoryGame photos={photos} />
+          <MemoryGame photos={photos} sfx={sfx} />
         ) : (
-          <JigsawPuzzle photos={photos} />
+          <JigsawPuzzle photos={photos} sfx={sfx} />
         )}
 
         <footer className="mt-8 text-xs text-slate-500">
           Tipp: a legjobb élményhez mobilon is próbáld ki; a Memory játék menti
           a legjobb időt nehézség szerint. A Kirakó szintekben halad, a
-          haladásod és a feltöltött képeid automatikusan mentődnek.
+          haladásod és a feltöltött képeid automatikusan mentődnek. Hangok a
+          fejlécben kapcsolhatók ki/be.
         </footer>
       </div>
     </div>
