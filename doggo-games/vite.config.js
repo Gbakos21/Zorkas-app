@@ -4,5 +4,5 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/doggo-games/", // <- a repo neve perjelekkel körülvéve
+  base: "/Zorkas-app/", // <- a repo neve perjelekkel körülvéve
 });
