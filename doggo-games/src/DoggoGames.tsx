@@ -2,14 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * DoggoGames – két miniapp egyben (mobil + szint rendszer a kirakóhoz):
- * 1) Memory párosító (nehézségi fok, időmérő, újra) + SFX
- * 2) Kirakó szintekkel (3×3 / 4×4 / 5×5), ghost előnézet, ÉRINTÉS-BARÁT csere,
- *    SFX és 🎉🐶 konfetti a szint befejezésénél.
+ * 1) Memory párosító (nehézség, időmérő, újra) + SFX
+ * 2) Kirakó (3×3/4×4/5×5), ghost előnézet, ÉRINTÉS-BARÁT csere, SFX és 🎉🐶 konfetti.
  *
- * ÚJ: Felhasználói képek tartósítása
- * - A feltöltött képeket Data URL-ként elmentjük localStorage-be
- * - Betöltéskor automatikusan hozzáadjuk az alap képekhez
- * - (Alap tömörítés: max 1400px oldal, hogy beleférjen a localStorage-be)
+ * ÚJ: Felhasználói képek tartósítása (localStorage, DataURL)
+ * ÚJ: Ghost beállítás mentése (alapból KIKAPCS)
+ * ÚJ: Kész szint visszalépéskor NEM keverődik újra; csak a kampány resetnél keverünk.
  */
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
@@ -20,7 +18,7 @@ const DEFAULT_PHOTOS = Array.from(
 
 const LS_USER_PHOTOS_KEY = "doggo_user_photos_v1";
 const LS_SFX_KEY = "doggo_sfx_enabled_v1";
-const LS_GHOST_KEY = "doggo_puzzle_ghost_v1"; // <-- Ghost beállítás mentése
+const LS_GHOST_KEY = "doggo_puzzle_ghost_v1";
 
 // -------------------- UTIL --------------------
 
@@ -76,7 +74,7 @@ function useSfx(enabled: boolean): Sfx {
   const ensure = () => {
     if (!enabled) return null;
     // @ts-ignore
-    const AC = window.AudioContext || window.webkitAudioContext;
+    const AC = window.AudioContext || (window as any).webkitAudioContext;
     if (!AC) return null;
     if (!ctxRef.current) ctxRef.current = new AC();
     if (ctxRef.current.state === "suspended") {
@@ -356,7 +354,9 @@ function MemoryGame({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
 
       <div
         className="grid gap-2 sm:gap-3"
-        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+        style={{
+          gridTemplateColumns: `repeat(${DIFFICULTIES[difficulty].cols}, minmax(0, 1fr))`,
+        }}
       >
         {deck.map((card, i) => (
           <button
@@ -508,9 +508,8 @@ function JigsawPuzzle({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
   const [showGhost, setShowGhost] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     const raw = localStorage.getItem(LS_GHOST_KEY);
-    return raw === "true"; // ha nincs, false
+    return raw === "true";
   });
-  // GHOST mentése
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(LS_GHOST_KEY, String(showGhost));
@@ -527,12 +526,35 @@ function JigsawPuzzle({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
   }>({ active: false, fromOrder: null, hoverOrder: null, didMove: false });
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
 
+  /**
+   * START NEW:
+   * - Ha a célkép ehhez a fotóhoz "solved" a kampányban → NEM keverünk,
+   *   hanem kész állapotban (identitás sorrend) töltjük be.
+   * - Egyébként keverünk (és garantáljuk, hogy nem marad véletlenül megoldott).
+   */
   const startNew = (newImg = img, newGrid = grid) => {
     const base = newImg || currentImg;
+
+    // Cél index meghatározása a fotók között
+    const targetIdx = Math.max(
+      0,
+      photos.findIndex((p) => p === base)
+    );
+    const treatAsSolved = campaign.solved[targetIdx] === true;
+
     const t = makeTiles(base, newGrid);
-    const shuffledOrders = shuffle(t.map((x) => x.order));
-    if (shuffledOrders.every((o, i) => o === i)) shuffledOrders.reverse();
-    const mixed = t.map((tile, i) => ({ ...tile, order: shuffledOrders[i] }));
+
+    let mixed: Tile[];
+    if (treatAsSolved) {
+      // Kész szint → identitás sorrend (order=id)
+      mixed = t.map((tile) => ({ ...tile, order: tile.id }));
+    } else {
+      // Keverés
+      const shuffledOrders = shuffle(t.map((x) => x.order));
+      if (shuffledOrders.every((o, i) => o === i)) shuffledOrders.reverse();
+      mixed = t.map((tile, i) => ({ ...tile, order: shuffledOrders[i] }));
+    }
+
     setTiles(mixed);
     setSelectedOrder(null);
     prevSolvedRef.current = false;
@@ -671,7 +693,7 @@ function JigsawPuzzle({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
     setImg(value);
   };
 
-  // Reset kampány (1. szint NEM kész)
+  // Reset kampány (1. szint NEM kész) → innentől újra keverünk
   const resetCampaign = () => {
     const fresh: CampaignState = { index: 0, solved: photos.map(() => false) };
     setCampaign(fresh);
@@ -807,10 +829,11 @@ function JigsawPuzzle({ photos, sfx }: { photos: string[]; sfx: Sfx }) {
         {showGhost && img && (
           <div className="absolute inset-0 z-20 rounded-2xl overflow-hidden pointer-events-none">
             <div
-              className="w-full h-full opacity-25"
+              className="w-full h-full"
               style={{
+                opacity: 0.5, // <-- erősebb (0.5–0.6 jó érték)
                 backgroundImage: `url(${img})`,
-                backgroundSize: "contain",
+                backgroundSize: "100% 100%", // fedés a csempékkel
                 backgroundRepeat: "no-repeat",
                 backgroundPosition: "center",
               }}
@@ -949,7 +972,7 @@ function EmojiConfetti({
         const angle = Math.random() * Math.PI * 2;
         const dist = 80 + Math.random() * 140; // px
         const dx = Math.cos(angle) * dist;
-        const dy = Math.sin(angle) * dist * 0.8 - 40; // kicsit felfelé is
+        const dy = Math.sin(angle) * dist * 0.8 - 40;
         const delay = Math.random() * 0.15; // s
         const emoji = emojis[Math.floor(Math.random() * emojis.length)];
         const size = 18 + Math.round(Math.random() * 10); // px
@@ -1079,7 +1102,7 @@ export default function DoggoGames({
                 checked={sfxEnabled}
                 onChange={(e) => setSfxEnabled(e.target.checked)}
               />
-              🔊 Hangok
+              🔊 Hang
             </label>
 
             <nav className="flex items-center bg-white rounded-xl shadow border border-slate-200 overflow-hidden w-full sm:w-auto">
