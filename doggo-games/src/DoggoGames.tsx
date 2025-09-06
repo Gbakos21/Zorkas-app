@@ -12,9 +12,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  * Tailwind ajánlott a kinézethez.
  */
 
-const DEFAULT_PHOTOS = Array.from(
-  { length: 16 },
-  (_, i) => `/maci${i + 1}.jpg`
+const DEFAULT_PHOTOS = Array.from({ length: 16 }, (_, i) =>
+  new URL(`maci${i + 1}.jpg`, import.meta.env.BASE_URL).toString()
 );
 
 // Ha akarsz, ide bedrótozhatod az alapképeket.
@@ -99,6 +98,24 @@ function MemoryGame({ photos }: { photos: string[] }) {
   const [finished, setFinished] = useState(false);
   const [moves, setMoves] = useState(0);
 
+  // --- LOCK + TIMEOUT KEZELÉS (új) ---
+  const [locked, setLockedState] = useState(false);
+  const lockedRef = useRef(false);
+  const setLocked = (v: boolean) => {
+    lockedRef.current = v;
+    setLockedState(v);
+  };
+  const timeoutsRef = useRef<number[]>([]);
+  const addTimer = (fn: () => void, ms: number) => {
+    const id = window.setTimeout(fn, ms);
+    timeoutsRef.current.push(id);
+  };
+  const clearTimers = () => {
+    timeoutsRef.current.forEach((id) => clearTimeout(id));
+    timeoutsRef.current = [];
+  };
+  useEffect(() => () => clearTimers(), []);
+
   const { elapsed, reset } = useStopwatch(hasStarted && !finished);
   const bestKey = `doggo_mem_best_${difficulty}`;
   const bestMs =
@@ -109,6 +126,9 @@ function MemoryGame({ photos }: { photos: string[] }) {
   const cols = DIFFICULTIES[difficulty].cols;
 
   const startNew = (d: DifficultyKey = difficulty) => {
+    clearTimers(); // ÚJ
+    setLocked(false); // ÚJ
+
     const pairs = DIFFICULTIES[d].pairs;
     const src = photos.length ? photos : DEFAULT_PHOTOS;
     const safe = src.length
@@ -147,6 +167,9 @@ function MemoryGame({ photos }: { photos: string[] }) {
 
   const onCardClick = (idx: number) => {
     if (finished) return;
+    if (lockedRef.current) return; // zárolva az ellenőrzés alatt
+    if (flipped.length >= 2) return; // további biztonsági korlát
+
     const card = deck[idx];
     if (card.matched || card.flipped) return;
 
@@ -156,18 +179,20 @@ function MemoryGame({ photos }: { photos: string[] }) {
     newDeck[idx] = { ...card, flipped: true };
     const newFlipped = [...flipped, idx];
 
-    if (newFlipped.length === 2) setMoves((m) => m + 1);
-
     setDeck(newDeck);
     setFlipped(newFlipped);
 
     if (newFlipped.length === 2) {
+      setMoves((m) => m + 1);
+      setLocked(true); // két lap nyitva -> lock
+
       const [a, b] = newFlipped;
       const ca = newDeck[a];
       const cb = newDeck[b];
+
       if (ca.id === cb.id) {
         // találat
-        setTimeout(() => {
+        addTimer(() => {
           setDeck((d) => {
             const dd = d.slice();
             dd[a] = { ...dd[a], matched: true };
@@ -175,10 +200,11 @@ function MemoryGame({ photos }: { photos: string[] }) {
             return dd;
           });
           setFlipped([]);
+          setLocked(false);
         }, 250);
       } else {
-        // fordítsd vissza
-        setTimeout(() => {
+        // nem találat -> visszafordítás
+        addTimer(() => {
           setDeck((d) => {
             const dd = d.slice();
             dd[a] = { ...dd[a], flipped: false };
@@ -186,6 +212,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
             return dd;
           });
           setFlipped([]);
+          setLocked(false);
         }, 800);
       }
     }
@@ -240,9 +267,11 @@ function MemoryGame({ photos }: { photos: string[] }) {
           <button
             key={i}
             onClick={() => onCardClick(i)}
+            disabled={locked}
+            aria-disabled={locked}
             className={`relative aspect-[3/4] rounded-2xl overflow-hidden shadow transition-transform active:scale-[0.98] ${
               card.matched ? "ring-2 ring-emerald-500" : ""
-            }`}
+            } ${locked ? "cursor-not-allowed" : ""}`}
             aria-label={
               card.flipped || card.matched
                 ? "kártya (nyitva)"
@@ -531,7 +560,7 @@ export default function DoggoGames({
                 onClick={() => setTab("memory")}
                 className={`px-4 py-2 text-sm ${
                   tab === "memory"
-                    ? "bg-slate-900 text-white"
+                    ? "bg-slate-900 text-amber-300"
                     : "hover:bg-slate-50"
                 }`}
               >
@@ -541,7 +570,7 @@ export default function DoggoGames({
                 onClick={() => setTab("puzzle")}
                 className={`px-4 py-2 text-sm ${
                   tab === "puzzle"
-                    ? "bg-slate-900 text-white"
+                    ? "bg-slate-900 text-amber-300"
                     : "hover:bg-slate-50"
                 }`}
               >
