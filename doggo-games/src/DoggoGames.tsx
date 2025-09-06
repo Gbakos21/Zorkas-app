@@ -1,15 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * DoggoGames – két miniapp egyben:
+ * DoggoGames – két miniapp egyben (mobilra optimalizálva):
  * 1) Memory párosító (nehézségi fok, időmérő, újra)
- * 2) Kirakó (3×3 / 4×4 / 5×5), ghost előnézet, DnD csere
+ * 2) Kirakó (3×3 / 4×4 / 5×5), ghost előnézet, ÉRINTÉS-BARÁT csere:
+ *    - Húzd az ujjad a mezők fölött (nem kell hosszan nyomni),
+ *    - vagy: koppintás + koppintás két mezőre a cseréhez.
  *
  * Használat:
  * - Add át a kutyás képeket props-ban, pl. <DoggoGames initialPhotos={["/photos/dog1.jpg", "/photos/dog2.jpg"]} />
  *   VAGY a felületen tölts fel képeket (több is mehet egyszerre).
  *
- * Tailwind ajánlott a kinézethez.
+ * UI változtatások mobilra:
+ * - Rugalmas fejléckiosztás (stack mobilon),
+ * - Navigáció gombok teljes szélességben, nem lógnak ki,
+ * - Vezérlők kisebb paddinggel, wrap-olnak,
+ * - Kirakó: saját pointer-alapú drag (touch-on AZONNAL működik),
+ *           + koppintásos csere fallback.
  */
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
@@ -19,8 +26,8 @@ const DEFAULT_PHOTOS = Array.from(
   { length: 16 },
   (_, i) => new URL(`./assets/maci${i + 1}.jpg`, import.meta.url).href
 );
-console.log("DEFAULT_PHOTOS", DEFAULT_PHOTOS);
-// Ha akarsz, ide bedrótozhatod az alapképeket.
+
+// -------------------- UTIL --------------------
 
 type DifficultyKey = "easy" | "medium" | "hard";
 const DIFFICULTIES: Record<
@@ -102,7 +109,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
   const [finished, setFinished] = useState(false);
   const [moves, setMoves] = useState(0);
 
-  // --- LOCK + TIMEOUT KEZELÉS (új) ---
+  // --- LOCK + TIMEOUT KEZELÉS (stabilabb tappinghez) ---
   const [locked, setLockedState] = useState(false);
   const lockedRef = useRef(false);
   const setLocked = (v: boolean) => {
@@ -130,8 +137,8 @@ function MemoryGame({ photos }: { photos: string[] }) {
   const cols = DIFFICULTIES[difficulty].cols;
 
   const startNew = (d: DifficultyKey = difficulty) => {
-    clearTimers(); // ÚJ
-    setLocked(false); // ÚJ
+    clearTimers();
+    setLocked(false);
 
     const pairs = DIFFICULTIES[d].pairs;
     const src = photos.length ? photos : DEFAULT_PHOTOS;
@@ -172,7 +179,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
   const onCardClick = (idx: number) => {
     if (finished) return;
     if (lockedRef.current) return; // zárolva az ellenőrzés alatt
-    if (flipped.length >= 2) return; // további biztonsági korlát
+    if (flipped.length >= 2) return;
 
     const card = deck[idx];
     if (card.matched || card.flipped) return;
@@ -188,7 +195,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
 
     if (newFlipped.length === 2) {
       setMoves((m) => m + 1);
-      setLocked(true); // két lap nyitva -> lock
+      setLocked(true);
 
       const [a, b] = newFlipped;
       const ca = newDeck[a];
@@ -205,7 +212,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
           });
           setFlipped([]);
           setLocked(false);
-        }, 250);
+        }, 200);
       } else {
         // nem találat -> visszafordítás
         addTimer(() => {
@@ -217,17 +224,17 @@ function MemoryGame({ photos }: { photos: string[] }) {
           });
           setFlipped([]);
           setLocked(false);
-        }, 800);
+        }, 600);
       }
     }
   };
 
   return (
     <div className="w-full max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <select
-            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200"
+            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200 w-full sm:w-auto"
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value as DifficultyKey)}
           >
@@ -239,17 +246,17 @@ function MemoryGame({ photos }: { photos: string[] }) {
           </select>
           <button
             onClick={() => startNew()}
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white shadow hover:opacity-90"
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white shadow hover:opacity-90 w-full sm:w-auto"
           >
             Újrakeverés
           </button>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="text-sm text-slate-600">
+        <div className="flex items-center gap-4 text-sm">
+          <div className="text-slate-600">
             Lépések:{" "}
             <span className="font-semibold text-slate-900">{moves}</span>
           </div>
-          <div className="text-sm text-slate-600">
+          <div className="text-slate-600">
             Idő:{" "}
             <span className="font-mono text-slate-900">
               {msToClock(elapsed)}
@@ -264,7 +271,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
       </div>
 
       <div
-        className="grid gap-3"
+        className="grid gap-2 sm:gap-3"
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
       >
         {deck.map((card, i) => (
@@ -284,7 +291,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
           >
             {/* face */}
             <div
-              className={`absolute inset-0 bg-slate-100 flex items-center justify-center text-4xl select-none ${
+              className={`absolute inset-0 bg-slate-100 flex items-center justify-center text-3xl sm:text-4xl select-none ${
                 card.flipped || card.matched ? "opacity-0" : "opacity-100"
               }`}
             >
@@ -315,7 +322,7 @@ function MemoryGame({ photos }: { photos: string[] }) {
   );
 }
 
-// -------------------- JIGSAW PUZZLE --------------------
+// -------------------- JIGSAW PUZZLE (mobilbarát pointer + tap) --------------------
 
 type Tile = {
   id: number; // helyes index (0..n-1)
@@ -355,14 +362,24 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
   const [tiles, setTiles] = useState<Tile[]>([]);
   const [showGhost, setShowGhost] = useState(true);
 
+  // ÚJ: érintés-barát csere: pointer követés + tap-to-swap
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [dragging, setDragging] = useState<{
+    active: boolean;
+    fromOrder: number | null;
+    hoverOrder: number | null;
+    didMove: boolean;
+  }>({ active: false, fromOrder: null, hoverOrder: null, didMove: false });
+  const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
+
   const startNew = (newImg = img, newGrid = grid) => {
     const base = newImg || photos[0] || DEFAULT_PHOTOS[0] || "";
     const t = makeTiles(base, newGrid);
     const shuffledOrders = shuffle(t.map((x) => x.order));
-    // Ügyeljünk, hogy ne legyen rögtön megoldva
     if (shuffledOrders.every((o, i) => o === i)) shuffledOrders.reverse();
     const mixed = t.map((tile, i) => ({ ...tile, order: shuffledOrders[i] }));
     setTiles(mixed);
+    setSelectedOrder(null);
   };
 
   useEffect(() => {
@@ -386,29 +403,68 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
     );
   };
 
-  const handleDragStart = (
-    e: React.DragEvent<HTMLDivElement>,
-    order: number
-  ) => {
-    e.dataTransfer.setData("text/plain", String(order));
+  // --- Pointer alapú húzás (működik azonnal touch-on) ---
+  const computeOrderFromPoint = (clientX: number, clientY: number) => {
+    const root = gridRef.current;
+    if (!root) return null;
+    const r = root.getBoundingClientRect();
+    const cw = r.width / grid;
+    const ch = r.height / grid;
+    const x = Math.min(Math.max(clientX - r.left, 0), r.width - 0.01);
+    const y = Math.min(Math.max(clientY - r.top, 0), r.height - 0.01);
+    const col = Math.floor(x / cw);
+    const row = Math.floor(y / ch);
+    return row * grid + col;
   };
 
-  const handleDrop = (
-    e: React.DragEvent<HTMLDivElement>,
-    targetOrder: number
-  ) => {
-    const from = Number(e.dataTransfer.getData("text/plain"));
-    onSwap(from, targetOrder);
+  const handlePointerDown = (order: number) => (e: React.PointerEvent) => {
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    setDragging({
+      active: true,
+      fromOrder: order,
+      hoverOrder: order,
+      didMove: false,
+    });
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!dragging.active) return;
+    const ord = computeOrderFromPoint(e.clientX, e.clientY);
+    setDragging((d) => ({ ...d, didMove: true, hoverOrder: ord }));
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!dragging.active) return;
+    const targetOrder = dragging.hoverOrder ?? dragging.fromOrder!;
+    const fromOrder = dragging.fromOrder!;
+    if (dragging.didMove && targetOrder != null && fromOrder != null) {
+      onSwap(fromOrder, targetOrder);
+      setSelectedOrder(null);
+    } else {
+      // Nem mozdult: koppintás logika (tap-to-swap)
+      if (selectedOrder == null) setSelectedOrder(fromOrder);
+      else if (selectedOrder === fromOrder) setSelectedOrder(null);
+      else {
+        onSwap(selectedOrder, fromOrder);
+        setSelectedOrder(null);
+      }
+    }
+    setDragging({
+      active: false,
+      fromOrder: null,
+      hoverOrder: null,
+      didMove: false,
+    });
   };
 
   const solved = isSolved(tiles);
 
   return (
     <div className="w-full max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <select
-            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200"
+            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200 w-full sm:w-auto"
             value={grid}
             onChange={(e) => setGrid(Number(e.target.value))}
           >
@@ -418,11 +474,11 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
           </select>
           <button
             onClick={() => startNew()}
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white shadow hover:opacity-90"
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white shadow hover:opacity-90 w-full sm:w-auto"
           >
             Újrakeverés
           </button>
-          <label className="flex items-center gap-2 text-sm px-2 py-1 rounded-xl bg-slate-50 border border-slate-200">
+          <label className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 w-full sm:w-auto">
             <input
               type="checkbox"
               checked={showGhost}
@@ -431,9 +487,9 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
             Ghost előnézet
           </label>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <select
-            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200 max-w-xs"
+            className="px-3 py-2 rounded-xl bg-white shadow border border-slate-200 w-full sm:max-w-xs"
             value={img}
             onChange={(e) => setImg(e.target.value)}
           >
@@ -448,7 +504,7 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
       </div>
 
       {/* Játékmező */}
-      <div className="relative">
+      <div className="relative" onPointerMove={handlePointerMove}>
         {/* ghost háttér */}
         {showGhost && img && (
           <div className="absolute inset-0 rounded-2xl overflow-hidden opacity-25 pointer-events-none">
@@ -460,32 +516,49 @@ function JigsawPuzzle({ photos }: { photos: string[] }) {
         )}
 
         <div
-          className="grid gap-1 rounded-2xl overflow-hidden border border-slate-200 shadow relative"
+          ref={gridRef}
+          className="grid gap-1 rounded-2xl overflow-hidden border border-slate-200 shadow relative touch-none select-none"
           style={{ gridTemplateColumns: `repeat(${grid}, minmax(0, 1fr))` }}
         >
           {Array.from({ length: grid * grid }).map((_, order) => {
             const tile = byOrder.get(order)!;
+            const isSelected = selectedOrder === order;
+            const isHover = dragging.active && dragging.hoverOrder === order;
             return (
               <div
                 key={order}
                 className={`aspect-square bg-slate-100 relative ${
                   solved ? "ring-2 ring-emerald-500" : ""
+                } ${isHover ? "ring-2 ring-sky-400" : ""} ${
+                  isSelected ? "ring-2 ring-amber-400" : ""
                 }`}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => handleDrop(e, order)}
+                // Kattintás (fallback): két koppintásos csere
+                onClick={() => {
+                  if (dragging.active) return; // drag közben ne katt
+                  if (selectedOrder == null) setSelectedOrder(order);
+                  else if (selectedOrder === order) setSelectedOrder(null);
+                  else {
+                    onSwap(selectedOrder, order);
+                    setSelectedOrder(null);
+                  }
+                }}
               >
                 {tile && (
                   <div
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, order)}
-                    className="absolute inset-0 cursor-grab active:cursor-grabbing"
+                    onPointerDown={handlePointerDown(order)}
+                    onPointerUp={handlePointerUp}
+                    className={`absolute inset-0 cursor-pointer active:cursor-grabbing transition-transform ${
+                      dragging.active && dragging.fromOrder === order
+                        ? "scale-[0.98]"
+                        : ""
+                    }`}
                     style={{
                       backgroundImage: `url(${img})`,
                       backgroundSize: `${grid * 100}% ${grid * 100}%`,
                       backgroundPosition: tile.bgPos,
                     }}
                     aria-label={`mozaik darab #${tile.id}`}
-                    title="Fogd és húzd egy másik helyre"
+                    title="Húzd az ujjad a célmező fölé vagy koppints két mezőre a cseréhez"
                   />
                 )}
               </div>
@@ -526,7 +599,7 @@ function PhotoLoader({ onAdd }: { onAdd: (urls: string[]) => void }) {
   }, [urls.join("|")]);
 
   return (
-    <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white shadow border border-slate-200 cursor-pointer hover:bg-slate-50">
+    <label className="inline-flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2 rounded-xl bg-white shadow border border-slate-200 cursor-pointer hover:bg-slate-50 text-sm">
       <input
         type="file"
         accept="image/*"
@@ -552,17 +625,17 @@ export default function DoggoGames({
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-50 to-slate-100 text-slate-900">
-      <div className="max-w-6xl mx-auto p-4 sm:p-8">
-        <header className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+      <div className="max-w-6xl mx-auto p-3 sm:p-6">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
+          <h1 className="text-xl sm:text-3xl font-bold tracking-tight">
             🐶 Doggo Games
           </h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
             <PhotoLoader onAdd={addPhotos} />
-            <nav className="flex items-center bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+            <nav className="flex items-center bg-white rounded-xl shadow border border-slate-200 overflow-hidden w-full sm:w-auto">
               <button
                 onClick={() => setTab("memory")}
-                className={`px-4 py-2 text-sm ${
+                className={`px-4 py-2 text-sm flex-1 sm:flex-none ${
                   tab === "memory"
                     ? "bg-slate-900 text-amber-300"
                     : "hover:bg-slate-50"
@@ -572,7 +645,7 @@ export default function DoggoGames({
               </button>
               <button
                 onClick={() => setTab("puzzle")}
-                className={`px-4 py-2 text-sm ${
+                className={`px-4 py-2 text-sm flex-1 sm:flex-none ${
                   tab === "puzzle"
                     ? "bg-slate-900 text-amber-300"
                     : "hover:bg-slate-50"
