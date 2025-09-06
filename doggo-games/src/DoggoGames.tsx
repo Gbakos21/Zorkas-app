@@ -13,12 +13,20 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  */
 
 // GH Pages projektútvonal (repo neve). Dev módban marad "/".
-const BASE: string = import.meta.env.BASE_URL;
+// Minden maci*.jpg automatikus betöltése buildben is, helyes base-szel
+const files = import.meta.glob("/src/assets/maci*.jpg", {
+  as: "url",
+  eager: true,
+});
 
-const DEFAULT_PHOTOS: string[] = Array.from(
-  { length: 16 },
-  (_, i) => `${BASE}maci${i + 1}.jpg`
-);
+function numFromPath(p: string) {
+  const m = p.match(/maci(\d+)\.jpg$/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+const DEFAULT_PHOTOS: string[] = Object.entries(files)
+  .sort(([a], [b]) => numFromPath(a) - numFromPath(b))
+  .map(([, url]) => url as string);
 
 // Ha akarsz, ide bedrótozhatod az alapképeket.
 
