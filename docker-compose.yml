@@ -1,10 +1,8 @@
 services:
   doggogames-prod:
     build:
-      context: .
+      context: ./doggo-games
       dockerfile: Dockerfile
-      args:
-        APP_DIR: doggo-games
     ports:
       - "3004:80"
     container_name: doggogames-prod
