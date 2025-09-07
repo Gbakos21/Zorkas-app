@@ -1,0 +1,26 @@
+services:
+  doggogames-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_DIR: doggo-games
+    ports:
+      - "3004:80"
+    container_name: doggogames-prod
+
+  doggogames-dev:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./doggo-games:/app
+      - node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    container_name: doggogames-dev
+
+volumes:
+  node_modules:
